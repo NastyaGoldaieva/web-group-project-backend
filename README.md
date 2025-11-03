@@ -19,3 +19,30 @@ Brief description of features
 - Assignment creation and tracking.
 - Session booking with a calendar and slot management.
 - Reviews and ratings after sessions.
+
+Addendum: Signal username, meeting and contact-exchange flow (short)
+------------------------------------------------------------
+
+- Signal username required at registration
+  - Both Student and Mentor must provide a "Signal username" (signal_username) during registration. This field is stored privately and not shown publicly.
+
+- Visibility rules
+  - signal_username is hidden by default and becomes visible to the matched counterparty only after a successful meeting and mutual consent.
+
+- Meeting + calendar
+  - When a mentorship request is accepted, the system creates an internal meeting and chat and adds a Google Calendar event for both participants (via OAuth) with the meeting link.
+
+- Post-meeting mini-survey
+  - After the meeting, both participants receive a short two-question survey:
+    1. "Did the meeting take place?" (Yes / No)
+    2. "Do you want to continue interaction with this person?" (Yes / No)
+
+- Contact reveal logic
+  - signal_username is revealed to both participants only if BOTH answered "Yes" to both questions.
+  - If either participant answers "No" to either question (including asymmetric cases), the interaction ends and no contact is revealed.
+  - All survey responses are logged with timestamps and meeting IDs.
+
+- Data protection
+  - signal_username is stored encrypted. Users can update or delete it in account settings. Admins can view interaction logs for dispute resolution.
+
+```
