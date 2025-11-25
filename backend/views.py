@@ -1,5 +1,6 @@
-from rest_framework import generics, permissions
-from .serializers import RegisterSerializer, UserSerializer
+from rest_framework import generics, permissions, viewsets
+from .models import StudentProfile, Request
+from .serializers import StudentProfileSerializer, RequestSerializer, RegisterSerializer, UserSerializer
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
@@ -11,3 +12,11 @@ class MeView(generics.RetrieveAPIView):
 
     def get_object(self):
         return self.request.user
+
+class StudentProfileViewSet(viewsets.ModelViewSet):
+    queryset = StudentProfile.objects.all()
+    serializer_class = StudentProfileSerializer
+
+class RequestViewSet(viewsets.ModelViewSet):
+    queryset = Request.objects.all()
+    serializer_class = RequestSerializer
