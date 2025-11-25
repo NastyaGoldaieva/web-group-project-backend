@@ -1,6 +1,9 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
-from .models import User
+from .models import StudentProfile, Request, User
+
+admin.site.register(StudentProfile)
+admin.site.register(Request)
 
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
