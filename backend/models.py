@@ -50,3 +50,19 @@ class Request(models.Model):
 
     def __str__(self):
         return f"From {self.student.username} to {self.mentor.username} ({self.status})"
+
+class MentorProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='mentor_profile')
+    title = models.CharField(max_length=200, blank=True)
+    bio = models.TextField(blank=True)
+    skills = models.CharField(max_length=500, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    contact = models.CharField(max_length=200, blank=True)
+    availability = models.JSONField(blank=True, null=True, default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Mentor: {self.user.username} - {self.title or 'Mentor'}"
