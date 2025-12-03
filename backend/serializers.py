@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import StudentProfile, Request, MentorProfile
+from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 User = get_user_model()
 
@@ -47,3 +48,16 @@ class MentorUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = MentorProfile
         fields = ("title", "bio", "skills", "location", "contact", "availability")
+
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+    def validate(self, attrs):
+        self.token = attrs.get('refresh')
+        return attrs
+
+    def save(self, **kwargs):
+        try:
+            RefreshToken(self.token).blacklist()
+        except TokenError:
+            raise serializers.ValidationError("Invalid or expired refresh token")

@@ -1,6 +1,8 @@
-from rest_framework import generics, viewsets, permissions, exceptions
+from rest_framework import generics, viewsets, permissions, exceptions, status
+from rest_framework.views import APIView
+from rest_framework.response import Response
 from .models import StudentProfile, Request, MentorProfile
-from .serializers import StudentProfileSerializer, RequestSerializer, RegisterSerializer, UserSerializer, MentorSerializer, MentorUpdateSerializer
+from .serializers import StudentProfileSerializer, RequestSerializer, RegisterSerializer, UserSerializer, MentorSerializer, MentorUpdateSerializer, LogoutSerializer
 from .permissions import IsOwnerOrReadOnly
 from .pagination import StandardResultsSetPagination
 
@@ -55,3 +57,12 @@ class MentorViewSet(viewsets.ModelViewSet):
         return qs
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+class LogoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = LogoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
