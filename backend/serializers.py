@@ -1,63 +1,45 @@
-from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import StudentProfile, Request, MentorProfile
-from rest_framework_simplejwt.tokens import RefreshToken, TokenError
+from django.contrib.auth import get_user_model
+from .models import StudentProfile, MentorProfile, Request, Proposal, Meeting
 
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "username", "email", "first_name", "last_name", "role", "bio")
-
-class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
-    class Meta:
-        model = User
-        fields = ("username", "email", "password", "role", "first_name", "last_name")
-    def create(self, validated_data):
-        password = validated_data.pop("password")
-        user = User(**validated_data)
-        user.set_password(password)
-        user.save()
-        return user
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'role')
 
 class StudentProfileSerializer(serializers.ModelSerializer):
+    # If you want to expose username on profile responses:
     username = serializers.CharField(source='user.username', read_only=True)
-    email = serializers.EmailField(source='user.email', read_only=True)
+
     class Meta:
         model = StudentProfile
-        fields = ['id', 'username', 'email', 'bio', 'interests', 'study_year', 'contact', 'location']
-        read_only_fields = ['username', 'email']
+        # removed 'study_year'
+        fields = ('id', 'username', 'bio', 'interests', 'contact', 'location', 'availability')
+        read_only_fields = ('id', 'username')
+
+# Other serializers (keep your existing implementations)
+class MentorProfileSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    class Meta:
+        model = MentorProfile
+        fields = ('id', 'username', 'title', 'bio', 'skills', 'location', 'contact', 'availability', 'created_at')
 
 class RequestSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.username', read_only=True)
     mentor_name = serializers.CharField(source='mentor.username', read_only=True)
     class Meta:
         model = Request
-        fields = ['id', 'student', 'student_name', 'mentor', 'mentor_name', 'message', 'status', 'created_at']
-        read_only_fields = ['student', 'status', 'created_at']
+        fields = ('id', 'student', 'mentor', 'student_name', 'mentor_name', 'message', 'status', 'created_at')
+        read_only_fields = ('id', 'created_at')
 
-class MentorSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
+class ProposalSerializer(serializers.ModelSerializer):
     class Meta:
-        model = MentorProfile
-        fields = ("id", "user", "title", "bio", "skills", "location", "contact", "availability", "created_at")
+        model = Proposal
+        fields = ('id', 'request', 'mentor', 'student', 'slots', 'status', 'chosen_slot', 'created_at')
 
-class MentorUpdateSerializer(serializers.ModelSerializer):
+class MeetingSerializer(serializers.ModelSerializer):
     class Meta:
-        model = MentorProfile
-        fields = ("title", "bio", "skills", "location", "contact", "availability")
-
-class LogoutSerializer(serializers.Serializer):
-    refresh = serializers.CharField()
-
-    def validate(self, attrs):
-        self.token = attrs.get('refresh')
-        return attrs
-
-    def save(self, **kwargs):
-        try:
-            RefreshToken(self.token).blacklist()
-        except TokenError:
-            raise serializers.ValidationError("Invalid or expired refresh token")
+        model = Meeting
+        fields = ('id', 'mentor', 'student', 'start', 'end', 'status', 'meet_link', 'created_at')

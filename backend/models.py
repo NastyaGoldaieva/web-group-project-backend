@@ -1,6 +1,5 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.contrib.auth.models import User
 
 class User(AbstractUser):
     ROLE_MENTOR = "mentor"
@@ -24,12 +23,13 @@ class StudentProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     bio = models.TextField(blank=True, verbose_name="Про себе")
     interests = models.CharField(max_length=255, blank=True, verbose_name="Інтереси/Навички")
-    study_year = models.PositiveIntegerField(default=1, verbose_name="Курс навчання")
     contact = models.CharField(max_length=100, blank=True, verbose_name="Контакт (Telegram/Email)")
     location = models.CharField(max_length=100, blank=True, verbose_name="Місто/Країна")
+    availability = models.JSONField(blank=True, null=True, default=list, verbose_name="Availability (UTC intervals)")
 
     def __str__(self):
         return f"Student: {self.user.username}"
+
 
 class Request(models.Model):
     STATUS_CHOICES = [
@@ -58,7 +58,7 @@ class MentorProfile(models.Model):
     skills = models.CharField(max_length=500, blank=True)
     location = models.CharField(max_length=200, blank=True)
     contact = models.CharField(max_length=200, blank=True)
-    availability = models.JSONField(blank=True, null=True, default=dict)
+    availability = models.JSONField(blank=True, null=True, default=list)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -66,3 +66,43 @@ class MentorProfile(models.Model):
 
     def __str__(self):
         return f"Mentor: {self.user.username} - {self.title or 'Mentor'}"
+
+
+class Proposal(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('student_chosen', 'Student chosen'),
+        ('confirmed', 'Confirmed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    request = models.ForeignKey(Request, on_delete=models.CASCADE, related_name='proposals', null=True, blank=True)
+    mentor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='proposals_as_mentor')
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='proposals_as_student')
+    slots = models.JSONField(default=list)  # list of {"start": iso, "end": iso}
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending')
+    chosen_slot = models.JSONField(null=True, blank=True)  # {"start": iso, "end": iso}
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Proposal {self.id} {self.student.username} <-> {self.mentor.username} ({self.status})"
+
+
+class Meeting(models.Model):
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('confirmed', 'Confirmed'),
+        ('cancelled', 'Cancelled'),
+        ('completed', 'Completed'),
+    ]
+
+    mentor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='meetings_as_mentor')
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='meetings_as_student')
+    start = models.DateTimeField()
+    end = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    meet_link = models.CharField(max_length=1024, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Meeting {self.id} {self.student.username} <-> {self.mentor.username} at {self.start.isoformat()}"
