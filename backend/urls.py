@@ -9,6 +9,9 @@ from .views import (
     ProposalViewSet,
     MeetingViewSet,
     LogoutView,
+    ActivateAccountView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView
 )
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
@@ -22,6 +25,9 @@ router.register(r"meetings", MeetingViewSet, basename="meeting")
 urlpatterns = [
     path("", include(router.urls)),
     path("auth/register/", RegisterView.as_view(), name="register"),
+    path("auth/activate/", ActivateAccountView.as_view(), name="activate"),
+    path("auth/password-reset/", PasswordResetRequestView.as_view(), name="password_reset"),
+    path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
     path("auth/me/", MeView.as_view(), name="me"),
     path("auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

@@ -13,6 +13,9 @@ from .serializers import (
     LogoutSerializer,
     ProposalSerializer,
     MeetingSerializer,
+    ActivateAccountSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer
 )
 from .permissions import IsOwnerOrReadOnly
 from .pagination import StandardResultsSetPagination
@@ -20,6 +23,11 @@ from .utils import compute_common_slots, generate_meet_link, parse_iso_to_utc
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from rest_framework.permissions import IsAuthenticated
+from django.core.mail import send_mail
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
 
 User = get_user_model()
 
@@ -27,6 +35,70 @@ User = get_user_model()
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        activation_link = f"http://localhost:5173/activate/{uid}/{token}"
+
+        try:
+            send_mail(
+                subject="Підтвердження реєстрації в MentorMatch",
+                message=f"Привіт, {user.username}! \nБудь ласка, перейдіть за посиланням, щоб активувати акаунт:\n{activation_link}",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+        except Exception as e:
+            print(f"Email error: {e}")
+
+
+class ActivateAccountView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ActivateAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.user
+        user.is_active = True
+        user.save()
+        return Response({"detail": "Акаунт успішно активовано!"}, status=status.HTTP_200_OK)
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        user = User.objects.get(email=email)
+        print(f"Користувача знайдено: {user.username}")  # Debug
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        reset_link = f"http://localhost:5173/reset-password/{uid}/{token}"
+        send_mail(
+                subject="Скидання пароля MentorMatch",
+                message=f"Посилання: {reset_link}",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False
+        )
+        print("Лист успішно відправлено!")
+
+        return Response({"detail": "Якщо пошта існує, ми надіслали інструкції."}, status=status.HTTP_200_OK)
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.user
+        user.set_password(serializer.validated_data['new_password'])
+        user.save()
+        return Response({"detail": "Пароль успішно змінено!"}, status=status.HTTP_200_OK)
 
 
 class MeView(generics.RetrieveAPIView):
@@ -47,11 +119,6 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get', 'post', 'patch'], permission_classes=[IsAuthenticated])
     def me(self, request):
-        """
-        GET  /api/students/me/  -> return current user's profile or 404
-        POST /api/students/me/  -> create profile for current user (if none)
-        PATCH /api/students/me/ -> update profile for current user (if exists)
-        """
         user = request.user
         profile = getattr(user, 'student_profile', None)
 
@@ -69,7 +136,6 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             serializer.save(user=user)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        # PATCH
         if request.method == 'PATCH':
             if not profile:
                 return Response({"detail": "Profile does not exist."}, status=status.HTTP_404_NOT_FOUND)
@@ -88,32 +154,50 @@ class RequestViewSet(viewsets.ModelViewSet):
         return Request.objects.filter(student=user) | Request.objects.filter(mentor=user)
 
     def perform_create(self, serializer):
+        if self.request.user.role != 'student':
+            raise exceptions.ValidationError("Тільки студенти можуть відправляти запити.")
+
         mentor = serializer.validated_data['mentor']
+
+        if mentor.user == self.request.user:
+            raise exceptions.ValidationError("Не можна відправляти запит самому собі.")
+
         if Request.objects.filter(student=self.request.user, mentor=mentor).exists():
             raise exceptions.ValidationError("Ви вже відправили запит цьому ментору.")
-        serializer.save(student=self.request.user)
 
+        instance = serializer.save(student=self.request.user)
+
+        try:
+            send_mail(
+                subject=f"Новий запит від {instance.student.username}",
+                message=f"Студент {instance.student.username} надіслав вам запит:\n\n\"{instance.message}\"\n\nЗайдіть в кабінет.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[mentor.email],
+                fail_silently=True
+            )
+        except Exception as e:
+            print(f"Email failed: {e}")
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def accept(self, request, pk=None):
-        """Mentor accepts request -> create Proposal with computed slots."""
         req = self.get_object()
         if request.user != req.mentor:
             return Response({"detail": "Only mentor can accept."}, status=status.HTTP_403_FORBIDDEN)
         if req.status != 'pending':
             return Response({"detail": "Request already processed."}, status=status.HTTP_400_BAD_REQUEST)
-        # mark request accepted
+
         req.status = 'accepted'
         req.save()
-        # gather availabilities
+
         student_profile = getattr(req.student, 'student_profile', None)
         mentor_profile = getattr(req.mentor, 'mentor_profile', None)
         student_avail = student_profile.availability if student_profile else []
         mentor_avail = mentor_profile.availability if mentor_profile else []
-        # compute slots
-        duration = int(request.data.get('duration', 60))  # minutes
+
+        duration = int(request.data.get('duration', 60))
         step = int(request.data.get('step', 30))
         limit = int(request.data.get('limit', 20))
         slots = compute_common_slots(student_avail, mentor_avail, duration, step, limit)
+
         proposal = Proposal.objects.create(
             request=req,
             mentor=req.mentor,
@@ -121,21 +205,53 @@ class RequestViewSet(viewsets.ModelViewSet):
             slots=slots,
             status='pending'
         )
+
+        try:
+            send_mail(
+                subject="Ваш запит прийнято!",
+                message=f"Ментор {req.mentor.username} прийняв ваш запит. Оберіть час для зустрічі.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[req.student.email],
+                fail_silently=True
+            )
+        except Exception:
+            pass
+
         serializer = ProposalSerializer(proposal)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def reject(self, request, pk=None):
+        req = self.get_object()
+        if request.user != req.mentor:
+            return Response({"detail": "Тільки ментор може відхилити запит."}, status=status.HTTP_403_FORBIDDEN)
 
+        req.status = 'rejected'
+        req.save()
+
+        try:
+            send_mail(
+                subject="Оновлення статусу запиту",
+                message=f"На жаль, ментор {req.mentor.username} відхилив ваш запит.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[req.student.email],
+                fail_silently=True
+            )
+        except Exception:
+            pass
+
+        return Response(RequestSerializer(req).data, status=status.HTTP_200_OK)
 class MentorViewSet(viewsets.ModelViewSet):
     queryset = MentorProfile.objects.select_related("user").all()
     pagination_class = StandardResultsSetPagination
 
     def get_permissions(self):
-        if self.action in ["partial_update", "update", "create", "destroy"]:
+        if self.action in ["partial_update", "update", "create", "destroy", "me"]:
             return [permissions.IsAuthenticated(), IsOwnerOrReadOnly()]
         return [permissions.AllowAny()]
 
     def get_serializer_class(self):
-        if self.action in ["partial_update", "update", "create"]:
+        if self.action in ["partial_update", "update", "create", "me"]:
             return MentorUpdateSerializer
         return MentorSerializer
 
@@ -152,6 +268,24 @@ class MentorViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @action(detail=False, methods=['get', 'patch'], permission_classes=[IsAuthenticated])
+    def me(self, request):
+        user = request.user
+        try:
+            profile = user.mentor_profile
+        except MentorProfile.DoesNotExist:
+            return Response({"detail": "Mentor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method == 'GET':
+            serializer = MentorSerializer(profile)
+            return Response(serializer.data)
+
+        if request.method == 'PATCH':
+            serializer = MentorUpdateSerializer(profile, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
 
 class ProposalViewSet(viewsets.ModelViewSet):
     queryset = Proposal.objects.select_related("mentor", "student").all()
@@ -164,7 +298,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def select(self, request, pk=None):
-        """Student selects a slot from proposal.slots"""
         proposal = self.get_object()
         if request.user != proposal.student:
             return Response({"detail": "Only student can choose a slot."}, status=status.HTTP_403_FORBIDDEN)
@@ -172,8 +305,8 @@ class ProposalViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Cannot select on non-pending proposal."}, status=status.HTTP_400_BAD_REQUEST)
         chosen = request.data.get('chosen_slot')
         if not chosen or 'start' not in chosen or 'end' not in chosen:
-            return Response({"detail": "Provide chosen_slot with start and end ISO strings."}, status=status.HTTP_400_BAD_REQUEST)
-        # validate the chosen slot exists in slots
+            return Response({"detail": "Provide chosen_slot with start and end ISO strings."},
+                            status=status.HTTP_400_BAD_REQUEST)
         if chosen not in proposal.slots:
             return Response({"detail": "Chosen slot not in proposed slots."}, status=status.HTTP_400_BAD_REQUEST)
         proposal.chosen_slot = chosen
@@ -183,14 +316,12 @@ class ProposalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
-        """Mentor confirms student's chosen slot -> create Meeting"""
         proposal = self.get_object()
         if request.user != proposal.mentor:
             return Response({"detail": "Only mentor can confirm."}, status=status.HTTP_403_FORBIDDEN)
         if proposal.status != 'student_chosen':
             return Response({"detail": "No slot chosen by student yet."}, status=status.HTTP_400_BAD_REQUEST)
         chosen = proposal.chosen_slot
-        # parse chosen ISO strings into timezone-aware datetimes
         try:
             start_dt = parse_iso_to_utc(chosen.get('start'))
             end_dt = parse_iso_to_utc(chosen.get('end'))
