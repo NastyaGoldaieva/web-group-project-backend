@@ -70,6 +70,7 @@ class MentorProfile(models.Model):
 
 class Proposal(models.Model):
     STATUS_CHOICES = [
+        ('awaiting_mentor', 'Awaiting mentor slots'),
         ('pending', 'Pending'),
         ('student_chosen', 'Student chosen'),
         ('confirmed', 'Confirmed'),
@@ -80,7 +81,7 @@ class Proposal(models.Model):
     mentor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='proposals_as_mentor')
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='proposals_as_student')
     slots = models.JSONField(default=list)  # list of {"start": iso, "end": iso}
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='awaiting_mentor')
     chosen_slot = models.JSONField(null=True, blank=True)  # {"start": iso, "end": iso}
     created_at = models.DateTimeField(auto_now_add=True)
 
