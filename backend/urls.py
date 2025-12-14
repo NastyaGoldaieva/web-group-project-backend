@@ -11,7 +11,7 @@ from .views import (
     LogoutView,
     ActivateAccountView,
     PasswordResetRequestView,
-    PasswordResetConfirmView
+    PasswordResetConfirmView, GoogleLoginView, GoogleRegisterView
 )
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
@@ -23,6 +23,8 @@ router.register(r"proposals", ProposalViewSet, basename="proposal")
 router.register(r"meetings", MeetingViewSet, basename="meeting")
 
 urlpatterns = [
+    path("auth/google/register/", GoogleRegisterView.as_view(), name="google_register"),
+    path("auth/google/", GoogleLoginView.as_view(), name="google_login"),
     path("", include(router.urls)),
     path("auth/register/", RegisterView.as_view(), name="register"),
     path("auth/activate/", ActivateAccountView.as_view(), name="activate"),

@@ -32,8 +32,13 @@ from .serializers import (
 from .permissions import IsOwnerOrReadOnly
 from .pagination import StandardResultsSetPagination
 from .utils import compute_common_slots, generate_meet_link, parse_iso_to_utc, create_google_meet_event
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from rest_framework_simplejwt.tokens import RefreshToken
+import os
 
 User = get_user_model()
+
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
@@ -88,7 +93,6 @@ class PasswordResetRequestView(APIView):
                 fail_silently=True,
             )
         except User.DoesNotExist:
-            # We intentionally do not reveal whether the email exists
             pass
         return Response({"detail": "If the email exists, instructions were sent."}, status=status.HTTP_200_OK)
 
@@ -123,7 +127,6 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# --- Profile viewsets ---
 class StudentProfileViewSet(viewsets.ModelViewSet):
     queryset = StudentProfile.objects.select_related("user").all()
     serializer_class = StudentProfileSerializer
@@ -155,6 +158,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class RequestViewSet(viewsets.ModelViewSet):
     serializer_class = RequestSerializer
@@ -219,12 +223,10 @@ class RequestViewSet(viewsets.ModelViewSet):
         req.status = "accepted"
         req.save()
 
-        # create empty proposal waiting for mentor slots
         proposal = Proposal.objects.create(
             request=req, mentor=req.mentor, student=req.student, slots=[], status="awaiting_mentor"
         )
 
-        # ask mentor to propose slots (email + websocket)
         try:
             send_mail(
                 subject="Please provide your available days/times",
@@ -341,7 +343,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def propose_slots(self, request, pk=None):
-        # Mentor proposes slots for a proposal
         proposal = self.get_object()
         if request.user != proposal.mentor:
             return Response({"detail": "Only mentor can propose slots."}, status=status.HTTP_403_FORBIDDEN)
@@ -360,21 +361,21 @@ class ProposalViewSet(viewsets.ModelViewSet):
                 if not sd or not ed or sd >= ed:
                     raise ValueError()
             except Exception:
-                return Response({"detail": "Invalid slot format. Use ISO datetimes."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "Invalid slot format. Use ISO datetimes."},
+                                status=status.HTTP_400_BAD_REQUEST)
             valid.append({"start": s, "end": e})
 
         proposal.slots = valid
         proposal.status = "pending"
         proposal.save()
 
-        # notify student by email & websocket
         try:
             send_mail(
                 subject="Time proposal from mentor",
                 message=(
-                    f"Mentor {proposal.mentor.username} proposed slots:\n\n"
-                    + "\n".join([f"{x['start']} - {x['end']}" for x in valid])
-                    + f"\n\nChoose a slot in your dashboard: {getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/proposals/{proposal.id}"
+                        f"Mentor {proposal.mentor.username} proposed slots:\n\n"
+                        + "\n".join([f"{x['start']} - {x['end']}" for x in valid])
+                        + f"\n\nChoose a slot in your dashboard: {getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/proposals/{proposal.id}"
                 ),
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[proposal.student.email],
@@ -400,7 +401,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def select(self, request, pk=None):
-        # Student chooses a slot from mentor's proposals
         proposal = self.get_object()
         if request.user != proposal.student:
             return Response({"detail": "Only student can choose a slot."}, status=status.HTTP_403_FORBIDDEN)
@@ -409,7 +409,8 @@ class ProposalViewSet(viewsets.ModelViewSet):
 
         chosen = request.data.get("chosen_slot")
         if not chosen or "start" not in chosen or "end" not in chosen:
-            return Response({"detail": "Provide chosen_slot with start and end ISO strings."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Provide chosen_slot with start and end ISO strings."},
+                            status=status.HTTP_400_BAD_REQUEST)
         if chosen not in proposal.slots:
             return Response({"detail": "Chosen slot not in proposed slots."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -434,7 +435,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def confirm(self, request, pk=None):
-        # Mentor confirms the chosen slot -> schedule meeting (Google Meet if configured)
         proposal = self.get_object()
         if request.user != proposal.mentor:
             return Response({"detail": "Only mentor can confirm."}, status=status.HTTP_403_FORBIDDEN)
@@ -450,7 +450,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"detail": "Invalid chosen slot format."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # create meeting link (Google Calendar event with Meet if configured, fallback to generated link)
         meet_link = create_google_meet_event(
             start_dt,
             end_dt,
@@ -471,7 +470,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
         proposal.status = "confirmed"
         proposal.save()
 
-        # send email to both participants
         try:
             send_mail(
                 subject="Meeting scheduled",
@@ -486,7 +484,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
 
-        # notify both via websocket
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -508,7 +505,8 @@ class ProposalViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
 
-        return Response({"proposal": ProposalSerializer(proposal).data, "meeting": MeetingSerializer(meeting).data}, status=status.HTTP_201_CREATED)
+        return Response({"proposal": ProposalSerializer(proposal).data, "meeting": MeetingSerializer(meeting).data},
+                        status=status.HTTP_201_CREATED)
 
 
 class MeetingViewSet(viewsets.ModelViewSet):
@@ -519,3 +517,102 @@ class MeetingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         return Meeting.objects.filter(mentor=user) | Meeting.objects.filter(student=user)
+
+
+class GoogleLoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        token = request.data.get('token')
+        if not token:
+            return Response({'error': 'No token provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            id_info = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                os.getenv('GOOGLE_CLIENT_ID')
+            )
+            email = id_info['email']
+
+            try:
+                user = User.objects.get(email=email)
+
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    'status': 'login_success',
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                    'user': {
+                        'id': user.id,
+                        'username': user.username,
+                        'email': user.email,
+                        'role': user.role
+                    }
+                })
+            except User.DoesNotExist:
+                return Response({
+                    'status': 'need_registration',
+                    'email': email,
+                    'first_name': id_info.get('given_name', ''),
+                    'last_name': id_info.get('family_name', ''),
+                    'google_token': token
+                }, status=status.HTTP_200_OK)
+
+        except ValueError:
+            return Response({'error': 'Invalid Google token'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GoogleRegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        token = request.data.get('token')
+        role = request.data.get('role', 'student')
+        username = request.data.get('username')
+
+        if not token or not username:
+            return Response({'error': 'Всі поля обов\'язкові'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            id_info = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                os.getenv('GOOGLE_CLIENT_ID')
+            )
+            email = id_info['email']
+
+            if User.objects.filter(email=email).exists():
+                return Response({'error': 'User already exists'}, status=status.HTTP_400_BAD_REQUEST)
+
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                first_name=id_info.get('given_name', ''),
+                last_name=id_info.get('family_name', ''),
+                role=role,
+                is_active=True
+            )
+
+            if role == 'mentor':
+                MentorProfile.objects.create(user=user)
+            else:
+                StudentProfile.objects.create(user=user)
+
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'role': user.role
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            print(e)
+            return Response({'error': 'Registration failed'}, status=status.HTTP_400_BAD_REQUEST)
