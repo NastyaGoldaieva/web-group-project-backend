@@ -1,21 +1,19 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+import os
 
 def parse_iso_to_utc(dt_str):
-    """Parse ISO string (accepts trailing Z) into timezone-aware UTC datetime."""
     if dt_str is None:
         return None
     s = dt_str
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
-    # Python fromisoformat supports offsets like +00:00
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
 def intersect_intervals(a, b):
-    """a and b are lists of intervals dicts with 'start' and 'end' as datetimes (UTC). Returns list of dicts."""
     res = []
     i, j = 0, 0
     a_sorted = sorted(a, key=lambda x: x['start'])
@@ -43,11 +41,6 @@ def slice_into_slots(intervals, duration_minutes=60, step_minutes=30):
     return slots
 
 def compute_common_slots(avail1, avail2, duration_minutes=60, step_minutes=30, limit=20):
-    """
-    avail1, avail2: lists of dicts with 'start' and 'end' as ISO strings (UTC)
-    Returns list of slots as dicts with ISO strings in UTC (ending with Z).
-    """
-    # parse
     def to_dt_list(av):
         out = []
         for it in (av or []):
@@ -60,7 +53,6 @@ def compute_common_slots(avail1, avail2, duration_minutes=60, step_minutes=30, l
     b = to_dt_list(avail2)
     inter = intersect_intervals(a, b)
     slots_dt = slice_into_slots(inter, duration_minutes, step_minutes)
-    # limit and format to ISO Z
     def to_iso_z(dt):
         return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     out = []
@@ -70,3 +62,38 @@ def compute_common_slots(avail1, avail2, duration_minutes=60, step_minutes=30, l
 
 def generate_meet_link():
     return f"https://meet.example.com/{uuid4()}"
+
+# Google Calendar integration helper (optional). Falls back to generate_meet_link if not configured.
+def create_google_meet_event(start_dt, end_dt, summary, description, attendees_emails):
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE')
+        CALENDAR_ID = os.getenv('GOOGLE_CALENDAR_ID', 'primary')
+        if not SERVICE_ACCOUNT_FILE:
+            return generate_meet_link()
+        scopes = ['https://www.googleapis.com/auth/calendar']
+        credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+        service = build('calendar', 'v3', credentials=credentials)
+        event = {
+            'summary': summary,
+            'description': description,
+            'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'UTC'},
+            'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'UTC'},
+            'attendees': [{'email': e} for e in attendees_emails],
+            'conferenceData': {
+                'createRequest': {
+                    'requestId': str(uuid4())
+                }
+            }
+        }
+        created = service.events().insert(calendarId=CALENDAR_ID, body=event, conferenceDataVersion=1, sendUpdates='all').execute()
+        cd = created.get('conferenceData', {})
+        eps = cd.get('entryPoints', [])
+        for ep in eps:
+            uri = ep.get('uri')
+            if uri:
+                return uri
+        return generate_meet_link()
+    except Exception:
+        return generate_meet_link()
