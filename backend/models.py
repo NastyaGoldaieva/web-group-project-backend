@@ -18,7 +18,6 @@ class User(AbstractUser):
     def __str__(self):
         return f"{self.username} ({self.role})"
 
-
 class StudentProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     bio = models.TextField(blank=True, verbose_name="Про себе")
@@ -26,10 +25,10 @@ class StudentProfile(models.Model):
     contact = models.CharField(max_length=100, blank=True, verbose_name="Контакт (Telegram/Email)")
     location = models.CharField(max_length=100, blank=True, verbose_name="Місто/Країна")
     availability = models.JSONField(blank=True, null=True, default=list, verbose_name="Availability (UTC intervals)")
+    whatsapp_username = models.CharField(max_length=150, blank=True)
 
     def __str__(self):
         return f"Student: {self.user.username}"
-
 
 class Request(models.Model):
     STATUS_CHOICES = [
@@ -59,6 +58,7 @@ class MentorProfile(models.Model):
     location = models.CharField(max_length=200, blank=True)
     contact = models.CharField(max_length=200, blank=True)
     availability = models.JSONField(blank=True, null=True, default=list)
+    whatsapp_username = models.CharField(max_length=150, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -66,7 +66,6 @@ class MentorProfile(models.Model):
 
     def __str__(self):
         return f"Mentor: {self.user.username} - {self.title or 'Mentor'}"
-
 
 class Proposal(models.Model):
     STATUS_CHOICES = [
@@ -80,14 +79,13 @@ class Proposal(models.Model):
     request = models.ForeignKey(Request, on_delete=models.CASCADE, related_name='proposals', null=True, blank=True)
     mentor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='proposals_as_mentor')
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='proposals_as_student')
-    slots = models.JSONField(default=list)  # list of {"start": iso, "end": iso}
+    slots = models.JSONField(default=list)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='awaiting_mentor')
-    chosen_slot = models.JSONField(null=True, blank=True)  # {"start": iso, "end": iso}
+    chosen_slot = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Proposal {self.id} {self.student.username} <-> {self.mentor.username} ({self.status})"
-
 
 class Meeting(models.Model):
     STATUS_CHOICES = [
@@ -104,6 +102,16 @@ class Meeting(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
     meet_link = models.CharField(max_length=1024, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    student_attended = models.BooleanField(null=True)
+    student_liked = models.BooleanField(null=True)
+    student_continue = models.BooleanField(null=True)
+
+    mentor_attended = models.BooleanField(null=True)
+    mentor_liked = models.BooleanField(null=True)
+    mentor_continue = models.BooleanField(null=True)
+
+    whatsapp_shared = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Meeting {self.id} {self.student.username} <-> {self.mentor.username} at {self.start.isoformat()}"
