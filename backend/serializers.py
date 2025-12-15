@@ -120,9 +120,12 @@ class RequestSerializer(serializers.ModelSerializer):
         return value
 
 class ProposalSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    mentor_username = serializers.CharField(source='mentor.username', read_only=True)
     class Meta:
         model = Proposal
-        fields = ('id', 'request', 'mentor', 'student', 'slots', 'status', 'chosen_slot', 'created_at')
+        fields = ('id', 'request', 'mentor', 'mentor_username', 'student', 'student_username', 'slots', 'status', 'chosen_slot', 'created_at')
+        read_only_fields = ('id', 'created_at', 'mentor_username', 'student_username')
 
 class MeetingSerializer(serializers.ModelSerializer):
     class Meta:

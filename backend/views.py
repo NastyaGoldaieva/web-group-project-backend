@@ -206,6 +206,8 @@ class RequestViewSet(viewsets.ModelViewSet):
                         "student": instance.student.username,
                         "message": instance.message,
                         "status": instance.status,
+                        "recipient_id": mentor.id,
+                        "sender_id": instance.student.id
                     },
                 },
             )
@@ -248,7 +250,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                 {
                     "type": "notify",
                     "event": "request_accepted_need_slots",
-                    "data": {"request_id": req.id, "proposal_id": proposal.id},
+                    "data": {"request_id": req.id, "proposal_id": proposal.id, "recipient_id": req.mentor.id, "sender_id": req.mentor.id},
                 },
             )
         except Exception:
@@ -280,7 +282,7 @@ class RequestViewSet(viewsets.ModelViewSet):
                 {
                     "type": "notify",
                     "event": "request_rejected",
-                    "data": {"request_id": req.id, "status": req.status},
+                    "data": {"request_id": req.id, "status": req.status, "recipient_id": req.student.id, "sender_id": req.mentor.id},
                 },
             )
         except Exception:
@@ -391,7 +393,7 @@ class ProposalViewSet(viewsets.ModelViewSet):
                 {
                     "type": "notify",
                     "event": "mentor_proposed_slots",
-                    "data": {"proposal_id": proposal.id, "slots": proposal.slots},
+                    "data": {"proposal_id": proposal.id, "slots": proposal.slots, "recipient_id": proposal.student.id, "sender_id": proposal.mentor.id},
                 },
             )
         except Exception:
@@ -419,13 +421,28 @@ class ProposalViewSet(viewsets.ModelViewSet):
         proposal.save()
 
         try:
+            send_mail(
+                subject="Student chose a slot — please confirm",
+                message=(
+                    f"Student {proposal.student.username} chose the slot:\n\n"
+                    f"{proposal.chosen_slot.get('start')} — {proposal.chosen_slot.get('end')}\n\n"
+                    f"Please confirm or propose another time in your dashboard: {getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/mentor/proposals/{proposal.id}"
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[proposal.mentor.email],
+                fail_silently=True,
+            )
+        except Exception:
+            pass
+
+        try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
                 f"user_{proposal.mentor.id}",
                 {
                     "type": "notify",
                     "event": "student_chosen_slot",
-                    "data": {"proposal_id": proposal.id, "chosen_slot": proposal.chosen_slot},
+                    "data": {"proposal_id": proposal.id, "chosen_slot": proposal.chosen_slot, "recipient_id": proposal.mentor.id, "sender_id": proposal.student.id},
                 },
             )
         except Exception:
@@ -454,8 +471,9 @@ class ProposalViewSet(viewsets.ModelViewSet):
             start_dt,
             end_dt,
             summary=f"Meeting: {proposal.student.username} & {proposal.mentor.username}",
-            description=proposal.request.message or "",
+            description=proposal.request.message or '',
             attendees_emails=[proposal.student.email, proposal.mentor.email],
+            organizer_email=proposal.mentor.email
         )
 
         meeting = Meeting.objects.create(
@@ -491,7 +509,7 @@ class ProposalViewSet(viewsets.ModelViewSet):
                 {
                     "type": "notify",
                     "event": "proposal_confirmed",
-                    "data": {"proposal_id": proposal.id, "meeting_id": meeting.id, "meet_link": meet_link},
+                    "data": {"proposal_id": proposal.id, "meeting_id": meeting.id, "meet_link": meet_link, "recipient_id": proposal.student.id, "sender_id": proposal.mentor.id},
                 },
             )
             async_to_sync(channel_layer.group_send)(
@@ -499,7 +517,7 @@ class ProposalViewSet(viewsets.ModelViewSet):
                 {
                     "type": "notify",
                     "event": "proposal_confirmed",
-                    "data": {"proposal_id": proposal.id, "meeting_id": meeting.id, "meet_link": meet_link},
+                    "data": {"proposal_id": proposal.id, "meeting_id": meeting.id, "meet_link": meet_link, "recipient_id": proposal.mentor.id, "sender_id": proposal.mentor.id},
                 },
             )
         except Exception:
@@ -613,6 +631,5 @@ class GoogleRegisterView(APIView):
                 }
             }, status=status.HTTP_201_CREATED)
 
-        except Exception as e:
-            print(e)
+        except Exception:
             return Response({'error': 'Registration failed'}, status=status.HTTP_400_BAD_REQUEST)
