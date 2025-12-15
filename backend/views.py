@@ -3,7 +3,6 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
-from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
@@ -39,7 +38,6 @@ import os
 
 User = get_user_model()
 
-
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
@@ -60,7 +58,6 @@ class RegisterView(generics.CreateAPIView):
         except Exception:
             pass
 
-
 class ActivateAccountView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -71,7 +68,6 @@ class ActivateAccountView(APIView):
         user.is_active = True
         user.save()
         return Response({"detail": "Account activated"}, status=status.HTTP_200_OK)
-
 
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -96,7 +92,6 @@ class PasswordResetRequestView(APIView):
             pass
         return Response({"detail": "If the email exists, instructions were sent."}, status=status.HTTP_200_OK)
 
-
 class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -108,14 +103,12 @@ class PasswordResetConfirmView(APIView):
         user.save()
         return Response({"detail": "Password changed"}, status=status.HTTP_200_OK)
 
-
 class MeView(generics.RetrieveAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
         return self.request.user
-
 
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -125,7 +118,6 @@ class LogoutView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 class StudentProfileViewSet(viewsets.ModelViewSet):
     queryset = StudentProfile.objects.select_related("user").all()
@@ -159,7 +151,6 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-
 class RequestViewSet(viewsets.ModelViewSet):
     serializer_class = RequestSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -180,9 +171,7 @@ class RequestViewSet(viewsets.ModelViewSet):
             raise exceptions.ValidationError("Target user is not a mentor.")
         if Request.objects.filter(student=self.request.user, mentor=mentor).exists():
             raise exceptions.ValidationError("You have already sent a request to this mentor.")
-
         instance = serializer.save(student=self.request.user)
-
         try:
             send_mail(
                 subject=f"New request from {instance.student.username}",
@@ -193,7 +182,6 @@ class RequestViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -221,14 +209,11 @@ class RequestViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Only mentor can accept."}, status=status.HTTP_403_FORBIDDEN)
         if req.status != "pending":
             return Response({"detail": "Request already processed."}, status=status.HTTP_400_BAD_REQUEST)
-
         req.status = "accepted"
         req.save()
-
         proposal = Proposal.objects.create(
             request=req, mentor=req.mentor, student=req.student, slots=[], status="awaiting_mentor"
         )
-
         try:
             send_mail(
                 subject="Please provide your available days/times",
@@ -242,7 +227,6 @@ class RequestViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -255,7 +239,6 @@ class RequestViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         return Response(ProposalSerializer(proposal).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
@@ -288,7 +271,6 @@ class RequestViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
         return Response(RequestSerializer(req).data, status=status.HTTP_200_OK)
-
 
 class MentorViewSet(viewsets.ModelViewSet):
     queryset = MentorProfile.objects.select_related("user").all()
@@ -333,7 +315,6 @@ class MentorViewSet(viewsets.ModelViewSet):
             serializer.save()
             return Response(serializer.data)
 
-
 class ProposalViewSet(viewsets.ModelViewSet):
     queryset = Proposal.objects.select_related("mentor", "student").all()
     serializer_class = ProposalSerializer
@@ -348,11 +329,9 @@ class ProposalViewSet(viewsets.ModelViewSet):
         proposal = self.get_object()
         if request.user != proposal.mentor:
             return Response({"detail": "Only mentor can propose slots."}, status=status.HTTP_403_FORBIDDEN)
-
         slots = request.data.get("slots")
         if not isinstance(slots, list) or not slots:
             return Response({"detail": "Provide a non-empty list of slots."}, status=status.HTTP_400_BAD_REQUEST)
-
         valid = []
         for it in slots:
             s = it.get("start")
@@ -366,11 +345,9 @@ class ProposalViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Invalid slot format. Use ISO datetimes."},
                                 status=status.HTTP_400_BAD_REQUEST)
             valid.append({"start": s, "end": e})
-
         proposal.slots = valid
         proposal.status = "pending"
         proposal.save()
-
         try:
             send_mail(
                 subject="Time proposal from mentor",
@@ -385,7 +362,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -398,7 +374,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         return Response(ProposalSerializer(proposal).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
@@ -408,18 +383,15 @@ class ProposalViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Only student can choose a slot."}, status=status.HTTP_403_FORBIDDEN)
         if proposal.status != "pending":
             return Response({"detail": "Cannot select on non-pending proposal."}, status=status.HTTP_400_BAD_REQUEST)
-
         chosen = request.data.get("chosen_slot")
         if not chosen or "start" not in chosen or "end" not in chosen:
             return Response({"detail": "Provide chosen_slot with start and end ISO strings."},
                             status=status.HTTP_400_BAD_REQUEST)
         if chosen not in proposal.slots:
             return Response({"detail": "Chosen slot not in proposed slots."}, status=status.HTTP_400_BAD_REQUEST)
-
         proposal.chosen_slot = chosen
         proposal.status = "student_chosen"
         proposal.save()
-
         try:
             send_mail(
                 subject="Student chose a slot — please confirm",
@@ -434,7 +406,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -447,7 +418,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         return Response(ProposalSerializer(proposal).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
@@ -457,7 +427,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Only mentor can confirm."}, status=status.HTTP_403_FORBIDDEN)
         if proposal.status != "student_chosen":
             return Response({"detail": "No slot chosen by student yet."}, status=status.HTTP_400_BAD_REQUEST)
-
         chosen = proposal.chosen_slot
         try:
             start_dt = parse_iso_to_utc(chosen.get("start"))
@@ -466,7 +435,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
                 raise ValueError("Invalid datetimes")
         except Exception:
             return Response({"detail": "Invalid chosen slot format."}, status=status.HTTP_400_BAD_REQUEST)
-
         meet_link = create_google_meet_event(
             start_dt,
             end_dt,
@@ -475,7 +443,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             attendees_emails=[proposal.student.email, proposal.mentor.email],
             organizer_email=proposal.mentor.email
         )
-
         meeting = Meeting.objects.create(
             mentor=proposal.mentor,
             student=proposal.student,
@@ -484,10 +451,8 @@ class ProposalViewSet(viewsets.ModelViewSet):
             status="scheduled",
             meet_link=meet_link,
         )
-
         proposal.status = "confirmed"
         proposal.save()
-
         try:
             send_mail(
                 subject="Meeting scheduled",
@@ -501,7 +466,6 @@ class ProposalViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -522,10 +486,47 @@ class ProposalViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-
         return Response({"proposal": ProposalSerializer(proposal).data, "meeting": MeetingSerializer(meeting).data},
                         status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def clear_chosen(self, request, pk=None):
+        proposal = self.get_object()
+        if request.user != proposal.mentor:
+            return Response({"detail": "Only mentor can clear chosen slot."}, status=status.HTTP_403_FORBIDDEN)
+        if not proposal.chosen_slot:
+            return Response({"detail": "No chosen slot to clear."}, status=status.HTTP_400_BAD_REQUEST)
+        old = proposal.chosen_slot
+        proposal.chosen_slot = None
+        proposal.status = "pending"
+        proposal.save()
+        try:
+            send_mail(
+                subject="Chosen slot was removed",
+                message=(
+                    f"Hello {proposal.student.username},\n\n"
+                    f"The mentor {proposal.mentor.username} removed the previously chosen slot {old.get('start')} — {old.get('end')}.\n"
+                    f"Please check the mentor's dashboard and choose another slot if available: {getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/proposals/{proposal.id}"
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[proposal.student.email],
+                fail_silently=True,
+            )
+        except Exception:
+            pass
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"user_{proposal.student.id}",
+                {
+                    "type": "notify",
+                    "event": "chosen_cleared",
+                    "data": {"proposal_id": proposal.id, "old_slot": old, "recipient_id": proposal.student.id, "sender_id": proposal.mentor.id},
+                },
+            )
+        except Exception:
+            pass
+        return Response(ProposalSerializer(proposal).data, status=status.HTTP_200_OK)
 
 class MeetingViewSet(viewsets.ModelViewSet):
     queryset = Meeting.objects.select_related("mentor", "student").all()
@@ -536,6 +537,58 @@ class MeetingViewSet(viewsets.ModelViewSet):
         user = self.request.user
         return Meeting.objects.filter(mentor=user) | Meeting.objects.filter(student=user)
 
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def feedback(self, request, pk=None):
+        meeting = self.get_object()
+        user = request.user
+        payload = request.data or {}
+        attended = payload.get("attended")
+        liked = payload.get("liked")
+        cont = payload.get("continue")
+        changed = False
+        if user == meeting.student:
+            if attended is not None:
+                meeting.student_attended = bool(attended)
+                changed = True
+            if liked is not None:
+                meeting.student_liked = bool(liked)
+                changed = True
+            if cont is not None:
+                meeting.student_continue = bool(cont)
+                changed = True
+        elif user == meeting.mentor:
+            if attended is not None:
+                meeting.mentor_attended = bool(attended)
+                changed = True
+            if liked is not None:
+                meeting.mentor_liked = bool(liked)
+                changed = True
+            if cont is not None:
+                meeting.mentor_continue = bool(cont)
+                changed = True
+        else:
+            return Response({"detail": "Not a participant"}, status=status.HTTP_403_FORBIDDEN)
+        if changed:
+            meeting.save()
+        s_cont = meeting.student_continue
+        m_cont = meeting.mentor_continue
+        if s_cont is not None and m_cont is not None:
+            if s_cont is False and m_cont is False:
+                Request.objects.filter(student=meeting.student, mentor=meeting.mentor).update(status='rejected')
+                Proposal.objects.filter(student=meeting.student, mentor=meeting.mentor).delete()
+                Meeting.objects.filter(student=meeting.student, mentor=meeting.mentor).exclude(id=meeting.id).delete()
+                meeting.status = "completed"
+                meeting.save()
+                return Response({"result": "collaboration_ended"}, status=status.HTTP_200_OK)
+            if s_cont is True and m_cont is True:
+                meeting.whatsapp_shared = True
+                meeting.save()
+                mentor_profile = getattr(meeting.mentor, "mentor_profile", None)
+                student_profile = getattr(meeting.student, "student_profile", None)
+                mentor_link = f"https://wa.me/{mentor_profile.whatsapp_username}" if mentor_profile and mentor_profile.whatsapp_username else ""
+                student_link = f"https://wa.me/{student_profile.whatsapp_username}" if student_profile and student_profile.whatsapp_username else ""
+                return Response({"result": "shared_whatsapp", "mentor_whatsapp": mentor_link, "student_whatsapp": student_link}, status=status.HTTP_200_OK)
+        return Response({"detail": "feedback_saved"}, status=status.HTTP_200_OK)
 
 class GoogleLoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -545,7 +598,6 @@ class GoogleLoginView(APIView):
         token = request.data.get('token')
         if not token:
             return Response({'error': 'No token provided'}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
             id_info = id_token.verify_oauth2_token(
                 token,
@@ -553,10 +605,8 @@ class GoogleLoginView(APIView):
                 os.getenv('GOOGLE_CLIENT_ID')
             )
             email = id_info['email']
-
             try:
                 user = User.objects.get(email=email)
-
                 refresh = RefreshToken.for_user(user)
                 return Response({
                     'status': 'login_success',
@@ -577,10 +627,8 @@ class GoogleLoginView(APIView):
                     'last_name': id_info.get('family_name', ''),
                     'google_token': token
                 }, status=status.HTTP_200_OK)
-
         except ValueError:
             return Response({'error': 'Invalid Google token'}, status=status.HTTP_400_BAD_REQUEST)
-
 
 class GoogleRegisterView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -590,10 +638,9 @@ class GoogleRegisterView(APIView):
         token = request.data.get('token')
         role = request.data.get('role', 'student')
         username = request.data.get('username')
-
-        if not token or not username:
-            return Response({'error': 'Всі поля обов\'язкові'}, status=status.HTTP_400_BAD_REQUEST)
-
+        whatsapp = request.data.get('whatsapp_username', '')
+        if not token or not username or not whatsapp:
+            return Response({'error': 'All fields required (token, username, whatsapp_username)'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             id_info = id_token.verify_oauth2_token(
                 token,
@@ -601,10 +648,8 @@ class GoogleRegisterView(APIView):
                 os.getenv('GOOGLE_CLIENT_ID')
             )
             email = id_info['email']
-
             if User.objects.filter(email=email).exists():
                 return Response({'error': 'User already exists'}, status=status.HTTP_400_BAD_REQUEST)
-
             user = User.objects.create_user(
                 username=username,
                 email=email,
@@ -613,12 +658,10 @@ class GoogleRegisterView(APIView):
                 role=role,
                 is_active=True
             )
-
             if role == 'mentor':
-                MentorProfile.objects.create(user=user)
+                MentorProfile.objects.create(user=user, whatsapp_username=whatsapp)
             else:
-                StudentProfile.objects.create(user=user)
-
+                StudentProfile.objects.create(user=user, whatsapp_username=whatsapp)
             refresh = RefreshToken.for_user(user)
             return Response({
                 'refresh': str(refresh),
@@ -630,6 +673,5 @@ class GoogleRegisterView(APIView):
                     'role': user.role
                 }
             }, status=status.HTTP_201_CREATED)
-
         except Exception:
             return Response({'error': 'Registration failed'}, status=status.HTTP_400_BAD_REQUEST)

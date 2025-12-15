@@ -11,14 +11,16 @@ User = get_user_model()
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     email = serializers.EmailField(required=True)
+    whatsapp_username = serializers.CharField(write_only=True, required=True)
     class Meta:
         model = User
-        fields = ('username', 'password', 'email', 'first_name', 'last_name', 'role')
+        fields = ('username', 'password', 'email', 'first_name', 'last_name', 'role', 'whatsapp_username')
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Ця пошта вже використовується.")
         return value
     def create(self, validated_data):
+        whatsapp = validated_data.pop('whatsapp_username', '')
         user = User.objects.create_user(
             username=validated_data['username'],
             password=validated_data['password'],
@@ -29,9 +31,9 @@ class RegisterSerializer(serializers.ModelSerializer):
             is_active=False
         )
         if user.role == User.ROLE_MENTOR:
-            MentorProfile.objects.create(user=user)
+            MentorProfile.objects.create(user=user, whatsapp_username=whatsapp)
         else:
-            StudentProfile.objects.create(user=user)
+            StudentProfile.objects.create(user=user, whatsapp_username=whatsapp)
         return user
 
 class ActivateAccountSerializer(serializers.Serializer):
@@ -86,7 +88,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     class Meta:
         model = StudentProfile
-        fields = ('id', 'username', 'bio', 'interests', 'contact', 'location', 'availability')
+        fields = ('id', 'username', 'bio', 'interests', 'contact', 'location', 'availability', 'whatsapp_username')
         read_only_fields = ('id', 'username')
 
 class MentorProfileSerializer(serializers.ModelSerializer):
@@ -94,14 +96,14 @@ class MentorProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     class Meta:
         model = MentorProfile
-        fields = ('id', 'username', 'user_id', 'title', 'bio', 'skills', 'location', 'contact', 'availability', 'created_at')
+        fields = ('id', 'username', 'user_id', 'title', 'bio', 'skills', 'location', 'contact', 'availability', 'whatsapp_username', 'created_at')
 
 MentorSerializer = MentorProfileSerializer
 
 class MentorUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = MentorProfile
-        fields = ('title', 'bio', 'skills', 'location', 'contact', 'availability')
+        fields = ('title', 'bio', 'skills', 'location', 'contact', 'availability', 'whatsapp_username')
 
 class RequestSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.username', read_only=True)
@@ -128,6 +130,28 @@ class ProposalSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'created_at', 'mentor_username', 'student_username')
 
 class MeetingSerializer(serializers.ModelSerializer):
+    mentor_username = serializers.CharField(source='mentor.username', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    mentor_whatsapp = serializers.SerializerMethodField()
+    student_whatsapp = serializers.SerializerMethodField()
+
     class Meta:
         model = Meeting
-        fields = ('id', 'mentor', 'student', 'start', 'end', 'status', 'meet_link', 'created_at')
+        fields = ('id', 'mentor', 'mentor_username', 'student', 'student_username', 'start', 'end', 'status', 'meet_link', 'created_at',
+                  'student_attended', 'student_liked', 'student_continue',
+                  'mentor_attended', 'mentor_liked', 'mentor_continue',
+                  'whatsapp_shared', 'mentor_whatsapp', 'student_whatsapp')
+
+    def get_mentor_whatsapp(self, obj):
+        if obj.whatsapp_shared:
+            prof = getattr(obj.mentor, "mentor_profile", None)
+            if prof and prof.whatsapp_username:
+                return f"https://wa.me/{prof.whatsapp_username}"
+        return ""
+
+    def get_student_whatsapp(self, obj):
+        if obj.whatsapp_shared:
+            prof = getattr(obj.student, "student_profile", None)
+            if prof and prof.whatsapp_username:
+                return f"https://wa.me/{prof.whatsapp_username}"
+        return ""
