@@ -1,14 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 import os
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from google.auth.exceptions import RefreshError
-from googleapiclient.errors import HttpError
+import json
+from pathlib import Path
 
 from django.conf import settings
-from pathlib import Path
 
 def parse_iso_to_utc(dt_str):
     if dt_str is None:
@@ -72,13 +68,6 @@ def generate_meet_link():
     return f"https://meet.jit.si/{uuid4()}"
 
 def _resolve_service_account_file():
-    """
-    Return a path to the service account JSON file.
-    Priority:
-      1. settings.GOOGLE_SERVICE_ACCOUNT_FILE (if set)
-      2. BASE_DIR / 'service-account.json' (default project path)
-      3. None (not found)
-    """
     sa_path = getattr(settings, "GOOGLE_SERVICE_ACCOUNT_FILE", None)
     if sa_path:
         if os.path.isabs(sa_path):
@@ -95,47 +84,124 @@ def _resolve_service_account_file():
 def create_google_meet_event(start_dt, end_dt, summary, description, attendees_emails, organizer_email=None):
     sa_file = _resolve_service_account_file()
     if not sa_file:
+        print("create_google_meet_event: service account file not found, returning fallback Jitsi link")
         return generate_meet_link()
 
-    scopes = ['https://www.googleapis.com/auth/calendar']
+    scopes = [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.events',
+    ]
 
-    def _create_with_credentials(creds, calendar_id):
-        service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from google.auth.exceptions import RefreshError
+        from googleapiclient.errors import HttpError
+    except Exception as e:
+        print("create_google_meet_event: google libraries not available:", e)
+        return generate_meet_link()
+
+    def _parse_http_error_reason(err):
+        try:
+            info = json.loads(err.content.decode())
+            errs = info.get('error', {})
+            if isinstance(errs, dict):
+                return errs.get('errors')
+            return None
+        except Exception:
+            return None
+
+    def _create_with_credentials(creds, calendar_id, include_attendees=True, include_conference=True, send_updates='none'):
+        try:
+            service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
+        except Exception as e:
+            raise RuntimeError(f"Failed to build calendar service: {e}")
+
         event = {
             'summary': summary,
             'description': description,
             'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'UTC'},
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'UTC'},
-            'attendees': [{'email': e} for e in attendees_emails],
-            'conferenceData': {'createRequest': {'requestId': str(uuid4())}}
         }
-        created = service.events().insert(calendarId=calendar_id, body=event, conferenceDataVersion=1, sendUpdates='all').execute()
-        if created.get('hangoutLink'):
-            return created.get('hangoutLink')
-        cd = created.get('conferenceData', {})
-        for ep in cd.get('entryPoints', []):
-            uri = ep.get('uri')
-            if uri:
-                return uri
+
+        if include_conference and include_attendees:
+            event['conferenceData'] = {
+                'createRequest': {
+                    'requestId': str(uuid4()),
+                    'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+                }
+            }
+
+        if include_attendees and attendees_emails:
+            event['attendees'] = [{'email': e} for e in attendees_emails]
+
+        try:
+            created = service.events().insert(
+                calendarId=calendar_id,
+                body=event,
+                conferenceDataVersion=1 if include_conference and include_attendees else 0,
+                sendUpdates=send_updates
+            ).execute()
+        except HttpError as he:
+            raise he
+        except Exception as ex:
+            raise ex
+
+        if isinstance(created, dict):
+            if created.get('hangoutLink'):
+                return created.get('hangoutLink')
+            cd = created.get('conferenceData', {}) or {}
+            for ep in cd.get('entryPoints', []):
+                uri = ep.get('uri')
+                if uri:
+                    return uri
         return None
 
     if organizer_email:
         try:
             creds = service_account.Credentials.from_service_account_file(sa_file, scopes=scopes, subject=organizer_email)
-            link = _create_with_credentials(creds, organizer_email)
-            if link:
-                return link
-        except (RefreshError, HttpError) as e:
-            err_text = str(e)
-            print("Google Calendar impersonation error:", err_text)
+            try:
+                link = _create_with_credentials(creds, organizer_email, include_attendees=True, include_conference=True, send_updates='all')
+                if link:
+                    return link
+            except HttpError as he:
+                reasons = _parse_http_error_reason(he)
+                print(f"create_google_meet_event: impersonation attempt failed for {organizer_email}: {he}; reasons={reasons}")
+            except Exception as e:
+                print(f"create_google_meet_event: impersonation unexpected error for {organizer_email}: {e}")
+        except Exception as e:
+            print(f"create_google_meet_event: failed to load credentials for impersonation: {e}")
 
     try:
         creds2 = service_account.Credentials.from_service_account_file(sa_file, scopes=scopes)
-        calendar_id = getattr(settings, "GOOGLE_CALENDAR_ID", None) or creds2.service_account_email
-        link = _create_with_credentials(creds2, calendar_id)
-        if link:
-            return link
+        calendar_id = getattr(settings, "GOOGLE_CALENDAR_ID", None) or getattr(creds2, "service_account_email", None)
+        if not calendar_id:
+            print("create_google_meet_event: no calendar_id available from settings or service account")
+        else:
+            try:
+                link = _create_with_credentials(creds2, calendar_id, include_attendees=True, include_conference=True, send_updates='all')
+                if link:
+                    return link
+            except HttpError as he:
+                reasons = _parse_http_error_reason(he)
+                print(f"create_google_meet_event: create event on service account calendar failed for {calendar_id}: {he}; reasons={reasons}")
+                try:
+                    if reasons:
+                        for r in reasons:
+                            if r.get('reason') == 'forbiddenForServiceAccounts':
+                                try:
+                                    link = _create_with_credentials(creds2, calendar_id, include_attendees=False, include_conference=False, send_updates='none')
+                                    if link:
+                                        return link
+                                except Exception as e2:
+                                    print(f"create_google_meet_event: retry without attendees failed: {e2}")
+                                break
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"create_google_meet_event: unexpected error creating event on {calendar_id}: {e}")
     except Exception as e:
-        print("Google Calendar create event error (no impersonation):", e)
+        print("create_google_meet_event: failed to load service account credentials:", e)
 
+    print("create_google_meet_event: all google attempts failed, returning fallback Jitsi link")
     return generate_meet_link()

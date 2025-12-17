@@ -124,10 +124,65 @@ class RequestSerializer(serializers.ModelSerializer):
 class ProposalSerializer(serializers.ModelSerializer):
     student_username = serializers.CharField(source='student.username', read_only=True)
     mentor_username = serializers.CharField(source='mentor.username', read_only=True)
+    meeting_id = serializers.SerializerMethodField()
+    meet_link = serializers.SerializerMethodField()
+    whatsapp_shared = serializers.SerializerMethodField()
+    mentor_whatsapp = serializers.SerializerMethodField()
+    student_whatsapp = serializers.SerializerMethodField()
+    meeting_start = serializers.SerializerMethodField()
+    meeting_end = serializers.SerializerMethodField()
+
     class Meta:
         model = Proposal
-        fields = ('id', 'request', 'mentor', 'mentor_username', 'student', 'student_username', 'slots', 'status', 'chosen_slot', 'created_at')
-        read_only_fields = ('id', 'created_at', 'mentor_username', 'student_username')
+        fields = ('id', 'request', 'mentor', 'mentor_username', 'student', 'student_username', 'slots', 'status', 'chosen_slot', 'created_at',
+                  'meeting_id', 'meet_link', 'whatsapp_shared', 'mentor_whatsapp', 'student_whatsapp', 'meeting_start', 'meeting_end')
+        read_only_fields = ('id', 'created_at', 'mentor_username', 'student_username', 'meeting_id', 'meet_link', 'whatsapp_shared', 'mentor_whatsapp', 'student_whatsapp', 'meeting_start', 'meeting_end')
+
+    def _get_latest_meeting(self, obj):
+        try:
+            return Meeting.objects.filter(student=obj.student, mentor=obj.mentor).order_by('-created_at').first()
+        except Exception:
+            return None
+
+    def get_meeting_id(self, obj):
+        m = self._get_latest_meeting(obj)
+        return m.id if m else None
+
+    def get_meet_link(self, obj):
+        m = self._get_latest_meeting(obj)
+        return m.meet_link if m else ""
+
+    def get_whatsapp_shared(self, obj):
+        m = self._get_latest_meeting(obj)
+        return bool(m.whatsapp_shared) if m else False
+
+    def get_mentor_whatsapp(self, obj):
+        m = self._get_latest_meeting(obj)
+        if m and m.whatsapp_shared:
+            prof = getattr(m.mentor, "mentor_profile", None)
+            if prof and prof.whatsapp_username:
+                return f"https://wa.me/{prof.whatsapp_username}"
+        return ""
+
+    def get_student_whatsapp(self, obj):
+        m = self._get_latest_meeting(obj)
+        if m and m.whatsapp_shared:
+            prof = getattr(m.student, "student_profile", None)
+            if prof and prof.whatsapp_username:
+                return f"https://wa.me/{prof.whatsapp_username}"
+        return ""
+
+    def get_meeting_start(self, obj):
+        m = self._get_latest_meeting(obj)
+        if m and m.start:
+            return m.start.isoformat()
+        return None
+
+    def get_meeting_end(self, obj):
+        m = self._get_latest_meeting(obj)
+        if m and m.end:
+            return m.end.isoformat()
+        return None
 
 class MeetingSerializer(serializers.ModelSerializer):
     mentor_username = serializers.CharField(source='mentor.username', read_only=True)
