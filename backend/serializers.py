@@ -91,12 +91,19 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         fields = ('id', 'username', 'bio', 'interests', 'contact', 'location', 'availability', 'whatsapp_username')
         read_only_fields = ('id', 'username')
 
+class UserInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'first_name', 'last_name', 'email')
+
 class MentorProfileSerializer(serializers.ModelSerializer):
+    user = UserInfoSerializer(read_only=True)
     username = serializers.CharField(source='user.username', read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
+
     class Meta:
         model = MentorProfile
-        fields = ('id', 'username', 'user_id', 'title', 'bio', 'skills', 'location', 'contact', 'availability', 'whatsapp_username', 'created_at')
+        fields = ('id', 'user', 'username', 'user_id', 'title', 'bio', 'skills', 'location', 'contact', 'availability', 'whatsapp_username', 'created_at')
 
 MentorSerializer = MentorProfileSerializer
 
